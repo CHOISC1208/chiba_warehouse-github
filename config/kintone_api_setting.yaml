@@ -1,4 +1,4 @@
-base_url: 'https://xxxx.cybozu.com/k/v1/records.json'
+base_url: '${KINTONE_BASE_URL}'
 configs:
   plchange:
     app_no: 1891

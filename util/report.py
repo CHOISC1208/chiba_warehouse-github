@@ -1,6 +1,275 @@
 import pandas as pd
 
 
+def build_allocation_summary(
+    allocation_df: pd.DataFrame,
+    psi_df: pd.DataFrame,
+    warehouse_master: pd.DataFrame,
+    id_warehouse_master: pd.DataFrame,
+    cost_master: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    最適化結果から取引タイプごとの詳細レポートを生成する。
+
+    取引タイプ:
+      - 保管: EndInv_pl × 保管単価
+      - 入庫: In_pl × 入出庫単価
+      - 出庫: Sales_pl × 入出庫単価
+      - 倉庫間出庫: Sales_pl × 元倉庫の入出庫単価（区分1のみ）
+      - 倉庫間入庫: Sales_pl × 出荷場所の入出庫単価（区分1のみ）
+
+    Args:
+        allocation_df: 最適化結果（識別子, 年月, 置場id, x_pl, ...）
+        psi_df: PSI情報（識別子, 年月, BeginInv_pl, In_pl, Sales_pl, EndInv_pl）
+        warehouse_master: 倉庫マスタ（場所id, 置場id, 場所名, 置場名）
+        id_warehouse_master: SKU-倉庫関係（識別子, 置場id, 置場区分, 出荷場所, 出荷場所名）
+        cost_master: コストマスタ（場所id, 区分, 分類, cost, 単位）
+
+    Returns:
+        transaction_df: 取引明細
+          - 識別子
+          - 年月
+          - 取引タイプ
+          - 置場id
+          - 置場名
+          - 移動先置場id（倉庫間移動の場合のみ）
+          - 移動先置場名（倉庫間移動の場合のみ）
+          - 数量(pl)
+          - 単価
+          - コスト
+    """
+
+    if allocation_df.empty:
+        print("[WARNING] allocation_df is empty!")
+        return pd.DataFrame(
+            columns=[
+                "識別子", "年月", "取引タイプ", "置場id", "置場名",
+                "移動先置場id", "移動先置場名", "数量(pl)", "単価", "コスト"
+            ]
+        )
+
+    # 1) 必要な情報を結合
+    # 年月フォーマットを統一（日付形式に変換）
+    df = allocation_df.copy()
+    df["年月"] = pd.to_datetime(df["年月"]).dt.normalize()
+
+    psi_merge = psi_df[["識別子", "年月", "In_pl", "Sales_pl", "EndInv_pl"]].copy()
+    psi_merge["年月"] = pd.to_datetime(psi_merge["年月"]).dt.normalize()
+
+    # allocation_df に PSI情報を結合
+    df = df.merge(
+        psi_merge,
+        on=["識別子", "年月"],
+        how="left"
+    )
+
+    # warehouse_master から場所id, 置場名を取得
+    wh_info = warehouse_master[["置場id", "場所id", "場所名", "置場名"]].drop_duplicates()
+    df = df.merge(wh_info, on="置場id", how="left")
+
+    # id_warehouse_master から置場区分, 出荷場所を取得
+    # 重要: 識別子×置場idの組み合わせで重複がないように確実に1行にする
+    id_wh_info = id_warehouse_master[
+        ["識別子", "置場id", "置場区分", "出荷場所", "出荷場所名"]
+    ].drop_duplicates(subset=["識別子", "置場id"], keep="first")
+
+    df = df.merge(id_wh_info, on=["識別子", "置場id"], how="left")
+
+    # 2) コスト単価の取得（場所idごとに保管費、入出庫費を取得）
+    # 保管費
+    storage_cost = cost_master[
+        (cost_master["分類"] == "保管") &
+        (cost_master["単位"].isin(["PL", "円/PL"]))
+    ][["場所id", "cost"]].drop_duplicates(subset=["場所id"], keep="first")
+    storage_cost = storage_cost.rename(columns={"cost": "保管単価"})
+
+    # 入出庫費
+    io_cost = cost_master[
+        (cost_master["分類"] == "入出庫") &
+        (cost_master["単位"].isin(["PL", "円/PL"]))
+    ][["場所id", "cost"]].drop_duplicates(subset=["場所id"], keep="first")
+    io_cost = io_cost.rename(columns={"cost": "入出庫単価"})
+
+    # 場所idごとの単価をマージ
+    df = df.merge(storage_cost, on="場所id", how="left")
+    df = df.merge(io_cost, on="場所id", how="left")
+
+    # 出荷場所の入出庫単価も取得（区分1の倉庫間移動用）
+    # 出荷場所の場所idを取得
+    ship_wh = warehouse_master[["置場id", "場所id"]].drop_duplicates(subset=["置場id"], keep="first")
+    ship_wh = ship_wh.rename(columns={"置場id": "出荷場所", "場所id": "出荷場所_場所id"})
+    df = df.merge(ship_wh, on="出荷場所", how="left")
+
+    # 出荷場所の入出庫単価
+    ship_io_cost = io_cost.rename(columns={"場所id": "出荷場所_場所id", "入出庫単価": "出荷場所_入出庫単価"})
+    df = df.merge(ship_io_cost, on="出荷場所_場所id", how="left")
+
+    # 3) トランザクション生成
+    transactions = []
+
+    for idx, row in df.iterrows():
+        識別子 = row["識別子"]
+        年月 = row["年月"]
+        置場id = row["置場id"]
+        置場名 = row["置場名"]
+        置場区分 = row["置場区分"]
+
+        # allocation_dfのx_plは、この倉庫に配置された在庫量
+        x_pl = row["x_pl"]
+
+        # PSI情報（識別子×年月の合計値）
+        EndInv_pl = row["EndInv_pl"]
+        In_pl = row["In_pl"]
+        Sales_pl = row["Sales_pl"]
+
+        保管単価 = row.get("保管単価", 0)
+        入出庫単価 = row.get("入出庫単価", 0)
+
+        # PSI情報がNaNの場合はスキップ
+        if pd.isna(EndInv_pl) or pd.isna(In_pl) or pd.isna(Sales_pl):
+            continue
+
+        # 置場区分を整数に変換（文字列の場合もある）
+        try:
+            置場区分 = int(置場区分)
+        except (ValueError, TypeError):
+            continue
+
+        # PSI値をx_plの比率で按分
+        # x_plは、この倉庫に配置された在庫量（保管量）
+        # In_pl、Sales_plは、EndInv_plに対する比率で計算
+        倉庫保管量 = x_pl
+        if EndInv_pl > 0:
+            倉庫入庫量 = In_pl * (x_pl / EndInv_pl)
+            倉庫出庫量 = Sales_pl * (x_pl / EndInv_pl)
+        else:
+            倉庫入庫量 = 0
+            倉庫出庫量 = 0
+
+        # 区分2（保管&出荷可能）の場合
+        if 置場区分 == 2:
+            # 1. 保管
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "保管",
+                "置場id": 置場id,
+                "置場名": 置場名,
+                "移動先置場id": None,
+                "移動先置場名": None,
+                "数量(pl)": 倉庫保管量,
+                "単価": 保管単価,
+                "コスト": 倉庫保管量 * 保管単価,
+            })
+
+            # 2. 入庫
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "入庫",
+                "置場id": 置場id,
+                "置場名": 置場名,
+                "移動先置場id": None,
+                "移動先置場名": None,
+                "数量(pl)": 倉庫入庫量,
+                "単価": 入出庫単価,
+                "コスト": 倉庫入庫量 * 入出庫単価,
+            })
+
+            # 3. 出庫
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "出庫",
+                "置場id": 置場id,
+                "置場名": 置場名,
+                "移動先置場id": None,
+                "移動先置場名": None,
+                "数量(pl)": 倉庫出庫量,
+                "単価": 入出庫単価,
+                "コスト": 倉庫出庫量 * 入出庫単価,
+            })
+
+        # 区分1（保管専用）の場合
+        elif 置場区分 == 1:
+            出荷場所 = row["出荷場所"]
+            出荷場所名 = row["出荷場所名"]
+            出荷場所_入出庫単価 = row.get("出荷場所_入出庫単価", 0)
+
+            # 1. 保管
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "保管",
+                "置場id": 置場id,
+                "置場名": 置場名,
+                "移動先置場id": None,
+                "移動先置場名": None,
+                "数量(pl)": 倉庫保管量,
+                "単価": 保管単価,
+                "コスト": 倉庫保管量 * 保管単価,
+            })
+
+            # 2. 入庫
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "入庫",
+                "置場id": 置場id,
+                "置場名": 置場名,
+                "移動先置場id": None,
+                "移動先置場名": None,
+                "数量(pl)": 倉庫入庫量,
+                "単価": 入出庫単価,
+                "コスト": 倉庫入庫量 * 入出庫単価,
+            })
+
+            # 3. 倉庫間出庫（元倉庫から出荷場所への移動）
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "倉庫間出庫",
+                "置場id": 置場id,
+                "置場名": 置場名,
+                "移動先置場id": 出荷場所,
+                "移動先置場名": 出荷場所名,
+                "数量(pl)": 倉庫出庫量,
+                "単価": 入出庫単価,
+                "コスト": 倉庫出庫量 * 入出庫単価,
+            })
+
+            # 4. 倉庫間入庫（出荷場所での受け入れ）
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "倉庫間入庫",
+                "置場id": 出荷場所,
+                "置場名": 出荷場所名,
+                "移動先置場id": 置場id,
+                "移動先置場名": 置場名,
+                "数量(pl)": 倉庫出庫量,
+                "単価": 出荷場所_入出庫単価,
+                "コスト": 倉庫出庫量 * 出荷場所_入出庫単価,
+            })
+
+            # 5. 出庫（出荷場所から顧客への出荷）
+            transactions.append({
+                "識別子": 識別子,
+                "年月": 年月,
+                "取引タイプ": "出庫",
+                "置場id": 出荷場所,
+                "置場名": 出荷場所名,
+                "移動先置場id": None,
+                "移動先置場名": None,
+                "数量(pl)": 倉庫出庫量,
+                "単価": 出荷場所_入出庫単価,
+                "コスト": 倉庫出庫量 * 出荷場所_入出庫単価,
+            })
+
+    transaction_df = pd.DataFrame(transactions)
+    return transaction_df
+
+
 def build_warehouse_utilization(
     allocation_df: pd.DataFrame,
     warehouse_master: pd.DataFrame,

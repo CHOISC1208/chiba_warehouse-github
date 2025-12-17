@@ -1,0 +1,7 @@
+# 既存の依存関係
+requests
+pandas
+pyyaml
+
+# 環境変数管理
+python-dotenv

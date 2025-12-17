@@ -2,22 +2,56 @@ import requests
 import os
 import pandas as pd
 import yaml
+import re
 from typing import Dict, Iterable, Optional, Tuple, List
+from dotenv import load_dotenv
+
+# プロジェクトルートのパスを計算
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_dotenv_path = os.path.join(_base_dir, '.env')
+
+# .envファイルから環境変数を読み込み（明示的なパスを指定）
+load_dotenv(_dotenv_path)
 
 os.environ["http_proxy"] = "http://agcproxy:7080"
 os.environ["https_proxy"] = "http://agcproxy:7080"
 
 
+def expand_env_vars(text: str) -> str:
+    """
+    環境変数を展開する関数（Windows/Linux両対応）
+    ${VAR} と $VAR の両方の形式をサポート
+    """
+    # ${VAR} 形式を展開
+    def replace_braced(match):
+        var_name = match.group(1)
+        return os.environ.get(var_name, match.group(0))
+
+    text = re.sub(r'\$\{([^}]+)\}', replace_braced, text)
+
+    # $VAR 形式を展開（英数字とアンダースコアのみ）
+    def replace_unbraced(match):
+        var_name = match.group(1)
+        return os.environ.get(var_name, match.group(0))
+
+    text = re.sub(r'\$([A-Za-z_][A-Za-z0-9_]*)', replace_unbraced, text)
+
+    return text
+
+
 def load_yaml_config(file_name):
-    """YAML ファイルを読み込む関数"""
+    """YAML ファイルを読み込む関数（環境変数を展開）"""
     try:
         # 現在のスクリプトのディレクトリから config ディレクトリへのパスを生成
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         # configディレクトリ内のファイルを指定
         full_path = os.path.join(base_dir, 'config', file_name)
-        
+
         with open(full_path, 'r', encoding='utf-8') as file:
-            return yaml.safe_load(file)
+            # ファイル内容を読み込み、環境変数を展開してからYAMLとしてパース
+            content = file.read()
+            content = expand_env_vars(content)
+            return yaml.safe_load(content)
     except Exception as e:
         print(f"設定ファイルの読み込みエラー: {e}")
         raise
@@ -34,6 +68,30 @@ class KintoneDataManager:
         settings = API_SETTINGS
         self.base_url: str = settings["base_url"]
         self.configs: Dict[str, Dict[str, str]] = settings["configs"]
+
+        # 環境変数が展開されていない場合のチェック
+        if '${' in self.base_url or not self.base_url.startswith('http'):
+            env_value = os.environ.get('KINTONE_BASE_URL', '(未設定)')
+            dotenv_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                '.env'
+            )
+            dotenv_exists = os.path.exists(dotenv_path)
+
+            raise ValueError(
+                f"環境変数 KINTONE_BASE_URL が設定されていません。\n"
+                f"以下の手順で設定してください：\n"
+                f"1. プロジェクトルートに .env ファイルを作成\n"
+                f"2. .env ファイルに以下を追加：\n"
+                f"   KINTONE_BASE_URL=https://your-subdomain.cybozu.com/k/v1/records.json\n"
+                f"3. python-dotenv がインストールされているか確認：pip install python-dotenv\n"
+                f"\n"
+                f"デバッグ情報：\n"
+                f"  - .env ファイルパス: {dotenv_path}\n"
+                f"  - .env ファイル存在: {dotenv_exists}\n"
+                f"  - 環境変数 KINTONE_BASE_URL: {env_value}\n"
+                f"  - YAML設定の base_url: {self.base_url}"
+            )
 
         # ★キャッシュ用（必須）
         self.dataframes: Dict[str, pd.DataFrame] = {}

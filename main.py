@@ -7,7 +7,7 @@ from util.kintone_data_loader import (
 )
 from util.psimake import build_sku_psi
 from util.optimizer import optimize_inventory_allocation
-from util.report import build_warehouse_utilization, build_cost_summary
+from util.report import build_allocation_summary
 from util.save import save_results
 
 
@@ -45,24 +45,19 @@ def main() -> None:
         cost_master=cost_master,
     )
 
-    # 倉庫×識別子×区分ごとのコストサマリ
-    cost_summary_df = build_cost_summary(
+    # 取引タイプごとの詳細レポート生成
+    allocation_summary_df = build_allocation_summary(
         allocation_df=allocation_df,
-        id_warehouse_master=id_warehouse_master,
-    )
-
-    # 倉庫充填率
-    utilization_df = build_warehouse_utilization(
-        allocation_df=allocation_df,
+        psi_df=psi_df,
         warehouse_master=warehouse_master,
+        id_warehouse_master=id_warehouse_master,
+        cost_master=cost_master,
     )
 
     # ===== 5) 結果保存 =====
     save_results(
         psi_df=psi_df,
-        allocation_df=allocation_df,
-        cost_summary_df=cost_summary_df,
-        utilization_df=utilization_df,
+        allocation_summary_df=allocation_summary_df,
     )
 
 
