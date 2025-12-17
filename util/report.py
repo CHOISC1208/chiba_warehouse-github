@@ -96,29 +96,40 @@ def build_allocation_summary(
     storage_cost = cost_master[
         (cost_master["分類"] == "保管") &
         (cost_master["単位"].isin(["PL", "円/PL"]))
-    ][["場所id", "cost"]].drop_duplicates()
+    ][["場所id", "cost"]].drop_duplicates(subset=["場所id"], keep="first")
     storage_cost = storage_cost.rename(columns={"cost": "保管単価"})
+    print(f"[DEBUG] storage_cost shape: {storage_cost.shape}, duplicates: {storage_cost.duplicated(subset=['場所id']).sum()}")
 
     # 入出庫費
     io_cost = cost_master[
         (cost_master["分類"] == "入出庫") &
         (cost_master["単位"].isin(["PL", "円/PL"]))
-    ][["場所id", "cost"]].drop_duplicates()
+    ][["場所id", "cost"]].drop_duplicates(subset=["場所id"], keep="first")
     io_cost = io_cost.rename(columns={"cost": "入出庫単価"})
+    print(f"[DEBUG] io_cost shape: {io_cost.shape}, duplicates: {io_cost.duplicated(subset=['場所id']).sum()}")
 
     # 場所idごとの単価をマージ
     df = df.merge(storage_cost, on="場所id", how="left")
+    print(f"[DEBUG] After storage_cost merge, df shape: {df.shape}")
+
     df = df.merge(io_cost, on="場所id", how="left")
+    print(f"[DEBUG] After io_cost merge, df shape: {df.shape}")
 
     # 出荷場所の入出庫単価も取得（区分1の倉庫間移動用）
     # 出荷場所の場所idを取得
-    ship_wh = warehouse_master[["置場id", "場所id"]].drop_duplicates()
+    ship_wh = warehouse_master[["置場id", "場所id"]].drop_duplicates(subset=["置場id"], keep="first")
     ship_wh = ship_wh.rename(columns={"置場id": "出荷場所", "場所id": "出荷場所_場所id"})
+    print(f"[DEBUG] ship_wh shape: {ship_wh.shape}, duplicates: {ship_wh.duplicated(subset=['出荷場所']).sum()}")
+
     df = df.merge(ship_wh, on="出荷場所", how="left")
+    print(f"[DEBUG] After ship_wh merge, df shape: {df.shape}")
 
     # 出荷場所の入出庫単価
     ship_io_cost = io_cost.rename(columns={"場所id": "出荷場所_場所id", "入出庫単価": "出荷場所_入出庫単価"})
+    print(f"[DEBUG] ship_io_cost shape: {ship_io_cost.shape}, duplicates: {ship_io_cost.duplicated(subset=['出荷場所_場所id']).sum()}")
+
     df = df.merge(ship_io_cost, on="出荷場所_場所id", how="left")
+    print(f"[DEBUG] After ship_io_cost merge, df shape: {df.shape}")
 
     # 3) トランザクション生成
     transactions = []
