@@ -9,15 +9,18 @@ os.environ["https_proxy"] = "http://agcproxy:7080"
 
 
 def load_yaml_config(file_name):
-    """YAML ファイルを読み込む関数"""
+    """YAML ファイルを読み込む関数（環境変数を展開）"""
     try:
         # 現在のスクリプトのディレクトリから config ディレクトリへのパスを生成
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         # configディレクトリ内のファイルを指定
         full_path = os.path.join(base_dir, 'config', file_name)
-        
+
         with open(full_path, 'r', encoding='utf-8') as file:
-            return yaml.safe_load(file)
+            # ファイル内容を読み込み、環境変数を展開してからYAMLとしてパース
+            content = file.read()
+            content = os.path.expandvars(content)
+            return yaml.safe_load(content)
     except Exception as e:
         print(f"設定ファイルの読み込みエラー: {e}")
         raise
