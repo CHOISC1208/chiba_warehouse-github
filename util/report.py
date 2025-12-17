@@ -53,13 +53,24 @@ def build_allocation_summary(
     print(f"[DEBUG] allocation_df sample:\n{allocation_df.head()}")
 
     # 1) 必要な情報を結合
+    # 年月フォーマットを統一（日付形式に変換）
+    df = allocation_df.copy()
+    df["年月"] = pd.to_datetime(df["年月"]).dt.normalize()
+
+    psi_merge = psi_df[["識別子", "年月", "In_pl", "Sales_pl", "EndInv_pl"]].copy()
+    psi_merge["年月"] = pd.to_datetime(psi_merge["年月"]).dt.normalize()
+
+    print(f"[DEBUG] allocation 年月 sample: {df['年月'].head().tolist()}")
+    print(f"[DEBUG] psi 年月 sample: {psi_merge['年月'].head().tolist()}")
+
     # allocation_df に PSI情報を結合
-    df = allocation_df.merge(
-        psi_df[["識別子", "年月", "In_pl", "Sales_pl", "EndInv_pl"]],
+    df = df.merge(
+        psi_merge,
         on=["識別子", "年月"],
         how="left"
     )
     print(f"[DEBUG] After PSI merge, df shape: {df.shape}")
+    print(f"[DEBUG] After PSI merge, null counts:\n{df[['In_pl', 'Sales_pl', 'EndInv_pl']].isnull().sum()}")
 
     # warehouse_master から場所id, 置場名を取得
     wh_info = warehouse_master[["置場id", "場所id", "場所名", "置場名"]].drop_duplicates()
@@ -124,6 +135,20 @@ def build_allocation_summary(
 
         if idx < 3:  # 最初の3行だけログ出力
             print(f"[DEBUG] Row {idx}: 識別子={識別子}, 置場id={置場id}, 置場区分={置場区分}, EndInv={EndInv_pl}, In={In_pl}, Sales={Sales_pl}")
+
+        # PSI情報がNaNの場合はスキップ
+        if pd.isna(EndInv_pl) or pd.isna(In_pl) or pd.isna(Sales_pl):
+            if idx < 3:
+                print(f"[DEBUG] Row {idx}: Skipping due to NaN PSI values")
+            continue
+
+        # 置場区分を整数に変換（文字列の場合もある）
+        try:
+            置場区分 = int(置場区分)
+        except (ValueError, TypeError):
+            if idx < 3:
+                print(f"[DEBUG] Row {idx}: Invalid 置場区分 value: {置場区分}")
+            continue
 
         # 区分2（保管&出荷可能）の場合
         if 置場区分 == 2:
