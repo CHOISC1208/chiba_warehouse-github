@@ -1,4 +1,6 @@
 import pandas as pd
+from datetime import datetime
+from typing import Tuple
 
 from util.monthly_inventory import calc_monthly_inventory
 from util.kintone_data_loader import (
@@ -8,15 +10,24 @@ from util.kintone_data_loader import (
 from util.psimake import build_sku_psi
 from util.optimizer import optimize_inventory_allocation
 from util.report import build_allocation_summary
-from util.save import save_results
 
 
-DEMAND_CSV_PATH = "data/20251208.csv"
+def run_optimization(demand_csv_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    在庫配置最適化を実行し、結果のDataFrameを返す（Databricks用）
 
-def main() -> None:
+    Args:
+        demand_csv_path: 需要データCSVのパス
+
+    Returns:
+        (psi_df, allocation_summary_df): PSIデータと取引明細データ
+    """
+    # 実行日時を記録
+    created_at = datetime.now()
+
     # ===== 1) 需要データ読み込み =====
-    annual_sales_volume_df = pd.read_csv(DEMAND_CSV_PATH)
-    print(f"[INFO] 需要CSVを読み込みました: {DEMAND_CSV_PATH}")
+    annual_sales_volume_df = pd.read_csv(demand_csv_path)
+    print(f"[INFO] 需要CSVを読み込みました: {demand_csv_path}")
 
     # ===== 2) 在庫換算用マスタの取得 =====
     plchange_df, id_df, item_df = load_inventory_inputs()
@@ -54,7 +65,32 @@ def main() -> None:
         cost_master=cost_master,
     )
 
-    # ===== 5) 結果保存 =====
+    # ===== 5) created_atカラムを追加 =====
+    psi_df["created_at"] = created_at
+    allocation_summary_df["created_at"] = created_at
+
+    print(f"[INFO] 最適化完了: PSI={len(psi_df)}行, 取引明細={len(allocation_summary_df)}行")
+
+    return psi_df, allocation_summary_df
+
+
+# デフォルトの需要データパス（ローカル開発用）
+DEFAULT_DEMAND_CSV_PATH = "data/20251208.csv"
+
+
+# ローカル実行用（後方互換）
+def main(demand_csv_path: str = DEFAULT_DEMAND_CSV_PATH) -> None:
+    """
+    ローカル環境での実行用（CSVファイルに保存）
+
+    Args:
+        demand_csv_path: 需要データCSVのパス（デフォルト: data/20251208.csv）
+    """
+    from util.save import save_results
+
+    psi_df, allocation_summary_df = run_optimization(demand_csv_path)
+
+    # 結果保存
     save_results(
         psi_df=psi_df,
         allocation_summary_df=allocation_summary_df,
@@ -62,4 +98,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    # コマンドライン引数からCSVパスを取得（指定がなければデフォルト値）
+    if len(sys.argv) > 1:
+        csv_path = sys.argv[1]
+    else:
+        csv_path = DEFAULT_DEMAND_CSV_PATH
+
+    main(csv_path)

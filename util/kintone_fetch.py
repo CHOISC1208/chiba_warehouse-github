@@ -4,35 +4,48 @@ import pandas as pd
 import yaml
 import re
 from typing import Dict, Iterable, Optional, Tuple, List
-from dotenv import load_dotenv
-
-# プロジェクトルートのパスを計算
-_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_dotenv_path = os.path.join(_base_dir, '.env')
-
-# .envファイルから環境変数を読み込み（明示的なパスを指定）
-load_dotenv(_dotenv_path)
 
 os.environ["http_proxy"] = "http://agcproxy:7080"
 os.environ["https_proxy"] = "http://agcproxy:7080"
 
 
-def expand_env_vars(text: str) -> str:
+def get_secret(scope: str, key: str) -> str:
     """
-    環境変数を展開する関数（Windows/Linux両対応）
+    Databricks Secretsから値を取得する関数
+    Databricks環境以外（ローカル等）では環境変数からフォールバック
+    """
+    try:
+        # Databricks環境の場合
+        from databricks import secrets as dbx_secrets
+        return dbx_secrets.get(scope=scope, key=key)
+    except ImportError:
+        # ローカル開発環境の場合は環境変数から取得
+        from dotenv import load_dotenv
+        _base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _dotenv_path = os.path.join(_base_dir, '.env')
+        load_dotenv(_dotenv_path)
+        return os.environ.get(key, "")
+
+
+def expand_env_vars(text: str, secret_scope: str = "kintone") -> str:
+    """
+    環境変数を展開する関数（Databricks Secrets対応）
     ${VAR} と $VAR の両方の形式をサポート
     """
     # ${VAR} 形式を展開
     def replace_braced(match):
         var_name = match.group(1)
-        return os.environ.get(var_name, match.group(0))
+        # Databricks Secretsから取得を試みる
+        value = get_secret(scope=secret_scope, key=var_name)
+        return value if value else match.group(0)
 
     text = re.sub(r'\$\{([^}]+)\}', replace_braced, text)
 
     # $VAR 形式を展開（英数字とアンダースコアのみ）
     def replace_unbraced(match):
         var_name = match.group(1)
-        return os.environ.get(var_name, match.group(0))
+        value = get_secret(scope=secret_scope, key=var_name)
+        return value if value else match.group(0)
 
     text = re.sub(r'\$([A-Za-z_][A-Za-z0-9_]*)', replace_unbraced, text)
 
