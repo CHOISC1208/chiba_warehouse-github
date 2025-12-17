@@ -24,7 +24,9 @@ databricks secrets put --scope kintone --key KINTONE_BASE_URL
 3. Git URLを入力: `https://github.com/CHOISC1208/chiba_warehouse-github.git`
 4. ブランチ: `claude/env-api-url-config-WPg2k`（または`main`）
 
-## 3. 需要データのアップロード
+## 3. 需要データの準備
+
+需要データを準備する方法は複数あります。環境に応じて選択してください。
 
 ### 方法A: DBFSに直接アップロード
 ```python
@@ -38,6 +40,35 @@ databricks secrets put --scope kintone --key KINTONE_BASE_URL
 # ノートブックで実行
 uploaded_files = dbutils.fs.put("/FileStore/warehouse_optimizer/input/20251208.csv",
                                   open("20251208.csv").read(), True)
+```
+
+### 方法C: Unity Catalogのテーブルから読み込み（推奨）
+既にカタログにデータがある場合は、テーブルから直接読み込めます。
+
+```python
+# カタログからSparkデータフレームとして読み込み
+demand_df = spark.table("your_catalog.your_schema.demand_table")
+
+# 一時的にCSVとして保存（最適化関数はCSVパスを期待するため）
+temp_csv_path = "/dbfs/tmp/warehouse_optimizer/demand_data.csv"
+demand_df.toPandas().to_csv(temp_csv_path, index=False)
+
+# 最適化を実行
+psi_df, allocation_summary_df = run_optimization(temp_csv_path)
+```
+
+### 方法D: 外部ストレージから読み込み
+Azure Blob StorageやS3から直接読み込むことも可能です。
+
+```python
+# Azure Blob Storageの例
+demand_csv_path = "wasbs://container@storageaccount.blob.core.windows.net/path/to/demand.csv"
+
+# S3の例
+demand_csv_path = "s3://bucket-name/path/to/demand.csv"
+
+# 最適化を実行
+psi_df, allocation_summary_df = run_optimization(demand_csv_path)
 ```
 
 ## 4. ノートブックの実行

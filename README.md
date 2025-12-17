@@ -1,93 +1,188 @@
-# MO-D015-chiba_warehouse
+# 倉庫在庫配置最適化システム
 
+## 概要
 
+需要データと倉庫情報から、コスト最小化を目指した在庫配置を計算するシステムです。
 
-## Getting started
+## 機能
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+- 需要データ（t）→ 在庫数（PL）への換算
+- PSI（Plan for every SKU Item）計算
+- 倉庫別在庫配置の最適化（線形計画法）
+- 倉庫別PSI計算（BeginInv + In - Sales = EndInv）
+- 取引タイプ別コスト明細の出力
+  - 保管、入庫、出庫、倉庫間出庫、倉庫間入庫
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## 使い方
 
-## Add your files
+### Databricks（推奨）
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+Python環境不要で、ブラウザから実行できます。
+
+詳細は [DATABRICKS_SETUP.md](./DATABRICKS_SETUP.md) を参照してください。
+
+**クイックスタート:**
+
+```python
+# Databricks Notebook
+%pip install pulp python-dotenv
+
+import sys
+sys.path.append("/Workspace/Repos/<your-username>/chiba_warehouse-github")
+from main import run_optimization
+
+# Unity Catalogから読み込む場合
+demand_df = spark.table("catalog.schema.demand_table")
+temp_csv_path = "/dbfs/tmp/demand_data.csv"
+demand_df.toPandas().to_csv(temp_csv_path, index=False)
+
+# 最適化実行
+psi_df, allocation_summary_df = run_optimization(temp_csv_path)
+
+# 結果表示
+display(allocation_summary_df)
+```
+
+### ローカル実行
+
+```bash
+# 1. 依存関係のインストール
+pip install -r requirements.txt
+
+# 2. 環境変数の設定
+echo "KINTONE_BASE_URL=https://xxxx.cybozu.com/k/v1/records.json" > .env
+
+# 3. 需要データを配置
+# data/20251208.csv
+
+# 4. 実行
+python main.py
+
+# または、CSVパスを指定
+python main.py /path/to/demand.csv
+```
+
+## 出力
+
+### 1. PSI（psi_df）
+
+| カラム | 説明 |
+|--------|------|
+| 識別子 | SKU識別子 |
+| 年月 | 対象年月 |
+| BeginInv_pl | 期首在庫（PL） |
+| In_pl | 入庫量（PL） |
+| Sales_pl | 出庫量（PL） |
+| EndInv_pl | 期末在庫（PL） |
+| created_at | 実行日時 |
+
+### 2. 取引明細（allocation_summary_df）
+
+| カラム | 説明 |
+|--------|------|
+| 識別子 | SKU識別子 |
+| 年月 | 対象年月 |
+| 取引タイプ | 保管/入庫/出庫/倉庫間出庫/倉庫間入庫 |
+| 置場id | 倉庫ID |
+| 置場名 | 倉庫名 |
+| 移動先置場id | 倉庫間移動の場合の移動先ID |
+| 移動先置場名 | 倉庫間移動の場合の移動先名 |
+| 数量(pl) | 取引数量（PL） |
+| 単価 | 単価（円/PL） |
+| コスト | コスト（円） |
+| created_at | 実行日時 |
+
+## 倉庫区分
+
+- **区分1（保管専用）**: 出庫禁止の倉庫。出荷場所（区分2）への倉庫間移動が必要。
+- **区分2（保管&出荷可能）**: 直接外部出庫が可能な倉庫。
+
+## 倉庫別PSI計算ロジック
+
+### データ開始月
+- BeginInv_倉庫 = BeginInv_pl × (EndInv_倉庫 / EndInv_pl)
+- In_倉庫 = In_pl × (EndInv_倉庫 / EndInv_pl)
+- Sales_倉庫 = BeginInv_倉庫 + In_倉庫 - EndInv_倉庫（逆算）
+
+### 新規倉庫（前月在庫なし）
+- BeginInv_倉庫 = 0
+- In_倉庫 = EndInv_倉庫（全量入庫）
+- Sales_倉庫 = 0
+
+### 既存倉庫
+- BeginInv_倉庫 = 前月のEndInv_倉庫
+- Sales_倉庫 = Sales_pl × (BeginInv_倉庫 / 実際のBeginInv_pl)
+- In_倉庫 = EndInv_倉庫 + Sales_倉庫 - BeginInv_倉庫（逆算）
+
+## 倉庫間移動の扱い
+
+区分1の倉庫からの倉庫間移動は**出荷のための移動**であり、PSI計算には含まれません。
+
+**fbl（区分2、出荷場所）の例:**
+```
+BeginInv + 入庫（外部） + 倉庫間入庫 - 出庫（外部） - 倉庫間出庫 = EndInv
+```
+
+倉庫間入庫と倉庫間出庫は相殺されるため、純粋なPSIは：
+```
+BeginInv + 入庫（外部） - 出庫（外部） = EndInv
+```
+
+## ディレクトリ構成
 
 ```
-cd existing_repo
-git remote add origin https://agctanuki.agc.jp/numerical-optimize/development/mo-d015-chiba_warehouse.git
-git branch -M main
-git push -uf origin main
+.
+├── main.py                          # メインエントリーポイント
+├── config/
+│   └── kintone_api_setting.yaml    # Kintone API設定
+├── util/
+│   ├── kintone_fetch.py             # Kintone データ取得
+│   ├── kintone_data_loader.py       # マスタデータロード
+│   ├── monthly_inventory.py         # 需要→在庫換算
+│   ├── psimake.py                   # PSI計算
+│   ├── optimizer.py                 # 在庫配置最適化
+│   ├── report.py                    # 取引明細レポート生成
+│   └── save.py                      # CSV出力
+├── DATABRICKS_SETUP.md              # Databricksセットアップガイド
+├── databricks_notebook_example.py   # Databricksノートブックサンプル
+└── requirements.txt                 # Python依存関係
 ```
 
-## Integrate with your tools
+## 依存関係
 
-- [ ] [Set up project integrations](https://agctanuki.agc.jp/numerical-optimize/development/mo-d015-chiba_warehouse/-/settings/integrations)
+- pandas
+- pyyaml
+- requests
+- pulp（線形計画法ソルバー）
+- python-dotenv（ローカル開発用）
 
-## Collaborate with your team
+## ライセンス
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+(社内利用のため省略)
 
-## Test and Deploy
+## 開発者向け
 
-Use the built-in continuous integration in GitLab.
+### ローカル開発環境のセットアップ
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+```bash
+# 仮想環境作成
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-***
+# 依存関係インストール
+pip install -r requirements.txt
 
-# Editing this README
+# .env作成
+cp .env.example .env
+# .envを編集してKINTONE_BASE_URLを設定
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### コミット規約
 
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```
+feat: 新機能
+fix: バグ修正
+refactor: リファクタリング
+docs: ドキュメント更新
+test: テスト追加・修正
+```

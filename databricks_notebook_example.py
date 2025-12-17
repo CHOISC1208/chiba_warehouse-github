@@ -34,14 +34,42 @@ from main import run_optimization
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. 需要データのアップロード（オプション）
+# MAGIC ## 2. 需要データの準備
 # MAGIC
-# MAGIC 以下のコードを実行すると、ファイルアップロードウィジェットが表示されます。
+# MAGIC 需要データを読み込む方法は3つあります：
+# MAGIC - **方法A**: DBFSにアップロードしたCSVファイル
+# MAGIC - **方法B**: Unity Catalogのテーブル
+# MAGIC - **方法C**: 外部ストレージ（S3, Azure Blob等）
 
 # COMMAND ----------
 
-# ファイルアップロード（オプション）
+# 【方法A】DBFSにアップロードしたCSVファイルを使用
+# ウィジェットでパスを指定
 dbutils.widgets.text("csv_path", "/dbfs/FileStore/warehouse_optimizer/input/20251208.csv", "需要CSVパス")
+demand_csv_path = dbutils.widgets.get("csv_path")
+
+# または、直接指定
+# demand_csv_path = "/dbfs/FileStore/warehouse_optimizer/input/20251208.csv"
+
+# COMMAND ----------
+
+# 【方法B】Unity Catalogのテーブルから読み込んでCSVに変換
+# カタログからSparkデータフレームとして読み込み
+# demand_df = spark.table("catalog_name.schema_name.demand_table")
+#
+# # 一時的にCSVとして保存
+# temp_csv_path = "/dbfs/tmp/demand_data.csv"
+# demand_df.toPandas().to_csv(temp_csv_path, index=False)
+# demand_csv_path = temp_csv_path
+
+# COMMAND ----------
+
+# 【方法C】外部ストレージから読み込み
+# Azure Blob Storageの例
+# demand_csv_path = "wasbs://container@storageaccount.blob.core.windows.net/path/to/demand.csv"
+#
+# S3の例
+# demand_csv_path = "s3://bucket-name/path/to/demand.csv"
 
 # COMMAND ----------
 
@@ -49,9 +77,6 @@ dbutils.widgets.text("csv_path", "/dbfs/FileStore/warehouse_optimizer/input/2025
 # MAGIC ## 3. 最適化実行
 
 # COMMAND ----------
-
-# 需要CSVパスを取得
-demand_csv_path = dbutils.widgets.get("csv_path")
 
 # 最適化を実行
 psi_df, allocation_summary_df = run_optimization(demand_csv_path)

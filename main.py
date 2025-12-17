@@ -74,13 +74,21 @@ def run_optimization(demand_csv_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     return psi_df, allocation_summary_df
 
 
+# デフォルトの需要データパス（ローカル開発用）
+DEFAULT_DEMAND_CSV_PATH = "data/20251208.csv"
+
+
 # ローカル実行用（後方互換）
-def main() -> None:
-    """ローカル環境での実行用（CSVファイルに保存）"""
+def main(demand_csv_path: str = DEFAULT_DEMAND_CSV_PATH) -> None:
+    """
+    ローカル環境での実行用（CSVファイルに保存）
+
+    Args:
+        demand_csv_path: 需要データCSVのパス（デフォルト: data/20251208.csv）
+    """
     from util.save import save_results
 
-    DEMAND_CSV_PATH = "data/20251208.csv"
-    psi_df, allocation_summary_df = run_optimization(DEMAND_CSV_PATH)
+    psi_df, allocation_summary_df = run_optimization(demand_csv_path)
 
     # 結果保存
     save_results(
@@ -90,4 +98,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    # コマンドライン引数からCSVパスを取得（指定がなければデフォルト値）
+    if len(sys.argv) > 1:
+        csv_path = sys.argv[1]
+    else:
+        csv_path = DEFAULT_DEMAND_CSV_PATH
+
+    main(csv_path)
