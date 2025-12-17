@@ -78,11 +78,17 @@ def build_allocation_summary(
     print(f"[DEBUG] After warehouse_master merge, df shape: {df.shape}")
 
     # id_warehouse_master から置場区分, 出荷場所を取得
+    # 重要: 識別子×置場idの組み合わせで重複がないように確実に1行にする
     id_wh_info = id_warehouse_master[
         ["識別子", "置場id", "置場区分", "出荷場所", "出荷場所名"]
-    ].drop_duplicates()
+    ].drop_duplicates(subset=["識別子", "置場id"], keep="first")
+
+    print(f"[DEBUG] id_wh_info shape after drop_duplicates: {id_wh_info.shape}")
+    print(f"[DEBUG] Checking duplicates in id_wh_info: {id_wh_info.duplicated(subset=['識別子', '置場id']).sum()}")
+
     df = df.merge(id_wh_info, on=["識別子", "置場id"], how="left")
     print(f"[DEBUG] After id_warehouse_master merge, df shape: {df.shape}")
+    print(f"[DEBUG] Expected shape: {allocation_df.shape[0]} (should match)")
     print(f"[DEBUG] 置場区分 unique values: {df['置場区分'].unique()}")
 
     # 2) コスト単価の取得（場所idごとに保管費、入出庫費を取得）
