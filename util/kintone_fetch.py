@@ -2,6 +2,7 @@ import requests
 import os
 import pandas as pd
 import yaml
+import re
 from typing import Dict, Iterable, Optional, Tuple, List
 from dotenv import load_dotenv
 
@@ -16,6 +17,28 @@ os.environ["http_proxy"] = "http://agcproxy:7080"
 os.environ["https_proxy"] = "http://agcproxy:7080"
 
 
+def expand_env_vars(text: str) -> str:
+    """
+    環境変数を展開する関数（Windows/Linux両対応）
+    ${VAR} と $VAR の両方の形式をサポート
+    """
+    # ${VAR} 形式を展開
+    def replace_braced(match):
+        var_name = match.group(1)
+        return os.environ.get(var_name, match.group(0))
+
+    text = re.sub(r'\$\{([^}]+)\}', replace_braced, text)
+
+    # $VAR 形式を展開（英数字とアンダースコアのみ）
+    def replace_unbraced(match):
+        var_name = match.group(1)
+        return os.environ.get(var_name, match.group(0))
+
+    text = re.sub(r'\$([A-Za-z_][A-Za-z0-9_]*)', replace_unbraced, text)
+
+    return text
+
+
 def load_yaml_config(file_name):
     """YAML ファイルを読み込む関数（環境変数を展開）"""
     try:
@@ -27,7 +50,7 @@ def load_yaml_config(file_name):
         with open(full_path, 'r', encoding='utf-8') as file:
             # ファイル内容を読み込み、環境変数を展開してからYAMLとしてパース
             content = file.read()
-            content = os.path.expandvars(content)
+            content = expand_env_vars(content)
             return yaml.safe_load(content)
     except Exception as e:
         print(f"設定ファイルの読み込みエラー: {e}")
