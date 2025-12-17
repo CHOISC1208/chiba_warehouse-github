@@ -3,6 +3,10 @@ import os
 import pandas as pd
 import yaml
 from typing import Dict, Iterable, Optional, Tuple, List
+from dotenv import load_dotenv
+
+# .envファイルから環境変数を読み込み
+load_dotenv()
 
 os.environ["http_proxy"] = "http://agcproxy:7080"
 os.environ["https_proxy"] = "http://agcproxy:7080"
