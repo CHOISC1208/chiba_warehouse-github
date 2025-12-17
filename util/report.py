@@ -53,7 +53,7 @@ def build_allocation_summary(
     df = allocation_df.copy()
     df["年月"] = pd.to_datetime(df["年月"]).dt.normalize()
 
-    psi_merge = psi_df[["識別子", "年月", "In_pl", "Sales_pl", "EndInv_pl"]].copy()
+    psi_merge = psi_df[["識別子", "年月", "BeginInv_pl", "In_pl", "Sales_pl", "EndInv_pl"]].copy()
     psi_merge["年月"] = pd.to_datetime(psi_merge["年月"]).dt.normalize()
 
     # allocation_df に PSI情報を結合
@@ -62,6 +62,33 @@ def build_allocation_summary(
         on=["識別子", "年月"],
         how="left"
     )
+
+    # 倉庫別PSI計算のため、時系列順にソート
+    df = df.sort_values(["識別子", "置場id", "年月"]).reset_index(drop=True)
+
+    # 前月EndInvを取得（前月のx_plが今月のBeginInv_倉庫になる）
+    df["前月年月"] = df["年月"] - pd.DateOffset(months=1)
+    prev_inv = df[["識別子", "置場id", "年月", "x_pl"]].copy()
+    prev_inv = prev_inv.rename(columns={"年月": "次月年月", "x_pl": "前月EndInv_倉庫"})
+
+    df = df.merge(
+        prev_inv,
+        left_on=["識別子", "置場id", "前月年月"],
+        right_on=["識別子", "置場id", "次月年月"],
+        how="left"
+    )
+    df["前月EndInv_倉庫"] = df["前月EndInv_倉庫"].fillna(0)
+    df = df.drop(columns=["前月年月", "次月年月"], errors="ignore")
+
+    # データ開始月を特定（各識別子の最初の年月）
+    first_months = df.groupby("識別子")["年月"].min().to_dict()
+    df["is_first_month"] = df.apply(lambda row: row["年月"] == first_months.get(row["識別子"]), axis=1)
+
+    # 識別子×年月ごとのBeginInv_plを集計（按分の基準として使用）
+    # 既に前月EndInv_倉庫の合計が BeginInv_pl になるはずだが、念のため確認用
+    df_grouped_beginv = df.groupby(["識別子", "年月"])["前月EndInv_倉庫"].sum().reset_index()
+    df_grouped_beginv = df_grouped_beginv.rename(columns={"前月EndInv_倉庫": "実際のBeginInv_pl"})
+    df = df.merge(df_grouped_beginv, on=["識別子", "年月"], how="left")
 
     # warehouse_master から場所id, 置場名を取得
     wh_info = warehouse_master[["置場id", "場所id", "場所名", "置場名"]].drop_duplicates()
@@ -115,12 +142,16 @@ def build_allocation_summary(
         置場区分 = row["置場区分"]
 
         # allocation_dfのx_plは、この倉庫に配置された在庫量
-        x_pl = row["x_pl"]
+        EndInv_倉庫 = row["x_pl"]
+        前月EndInv_倉庫 = row["前月EndInv_倉庫"]
+        is_first_month = row["is_first_month"]
 
         # PSI情報（識別子×年月の合計値）
-        EndInv_pl = row["EndInv_pl"]
+        BeginInv_pl = row["BeginInv_pl"]
         In_pl = row["In_pl"]
         Sales_pl = row["Sales_pl"]
+        EndInv_pl = row["EndInv_pl"]
+        実際のBeginInv_pl = row["実際のBeginInv_pl"]
 
         保管単価 = row.get("保管単価", 0)
         入出庫単価 = row.get("入出庫単価", 0)
@@ -135,16 +166,42 @@ def build_allocation_summary(
         except (ValueError, TypeError):
             continue
 
-        # PSI値をx_plの比率で按分
-        # x_plは、この倉庫に配置された在庫量（保管量）
-        # In_pl、Sales_plは、EndInv_plに対する比率で計算
-        倉庫保管量 = x_pl
-        if EndInv_pl > 0:
-            倉庫入庫量 = In_pl * (x_pl / EndInv_pl)
-            倉庫出庫量 = Sales_pl * (x_pl / EndInv_pl)
-        else:
-            倉庫入庫量 = 0
+        # 倉庫別PSI計算
+        倉庫保管量 = EndInv_倉庫
+
+        if is_first_month:
+            # データ開始月の場合：BeginInv_plとIn_plを按分
+            if EndInv_pl > 0:
+                BeginInv_倉庫 = BeginInv_pl * (EndInv_倉庫 / EndInv_pl)
+                倉庫入庫量 = In_pl * (EndInv_倉庫 / EndInv_pl)
+            else:
+                BeginInv_倉庫 = 0
+                倉庫入庫量 = 0
+            # Sales_倉庫は逆算: BeginInv + In - Sales = EndInv
+            倉庫出庫量 = BeginInv_倉庫 + 倉庫入庫量 - EndInv_倉庫
+            # 負の値は0に補正
+            倉庫出庫量 = max(0, 倉庫出庫量)
+
+        elif 前月EndInv_倉庫 == 0 and EndInv_倉庫 > 0:
+            # 新規倉庫の場合：全量入庫
+            BeginInv_倉庫 = 0
+            倉庫入庫量 = EndInv_倉庫
             倉庫出庫量 = 0
+
+        else:
+            # 既存倉庫の場合
+            BeginInv_倉庫 = 前月EndInv_倉庫
+
+            # Sales_plを前月在庫（BeginInv）の比率で按分
+            if 実際のBeginInv_pl > 0:
+                倉庫出庫量 = Sales_pl * (BeginInv_倉庫 / 実際のBeginInv_pl)
+            else:
+                倉庫出庫量 = 0
+
+            # In_倉庫は逆算: BeginInv + In - Sales = EndInv
+            倉庫入庫量 = EndInv_倉庫 + 倉庫出庫量 - BeginInv_倉庫
+            # 負の値は0に補正
+            倉庫入庫量 = max(0, 倉庫入庫量)
 
         # 区分2（保管&出荷可能）の場合
         if 置場区分 == 2:
