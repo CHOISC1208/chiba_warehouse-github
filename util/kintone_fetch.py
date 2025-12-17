@@ -5,8 +5,12 @@ import yaml
 from typing import Dict, Iterable, Optional, Tuple, List
 from dotenv import load_dotenv
 
-# .envファイルから環境変数を読み込み
-load_dotenv()
+# プロジェクトルートのパスを計算
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_dotenv_path = os.path.join(_base_dir, '.env')
+
+# .envファイルから環境変数を読み込み（明示的なパスを指定）
+load_dotenv(_dotenv_path)
 
 os.environ["http_proxy"] = "http://agcproxy:7080"
 os.environ["https_proxy"] = "http://agcproxy:7080"
@@ -44,6 +48,13 @@ class KintoneDataManager:
 
         # 環境変数が展開されていない場合のチェック
         if '${' in self.base_url or not self.base_url.startswith('http'):
+            env_value = os.environ.get('KINTONE_BASE_URL', '(未設定)')
+            dotenv_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                '.env'
+            )
+            dotenv_exists = os.path.exists(dotenv_path)
+
             raise ValueError(
                 f"環境変数 KINTONE_BASE_URL が設定されていません。\n"
                 f"以下の手順で設定してください：\n"
@@ -51,7 +62,12 @@ class KintoneDataManager:
                 f"2. .env ファイルに以下を追加：\n"
                 f"   KINTONE_BASE_URL=https://your-subdomain.cybozu.com/k/v1/records.json\n"
                 f"3. python-dotenv がインストールされているか確認：pip install python-dotenv\n"
-                f"現在の base_url: {self.base_url}"
+                f"\n"
+                f"デバッグ情報：\n"
+                f"  - .env ファイルパス: {dotenv_path}\n"
+                f"  - .env ファイル存在: {dotenv_exists}\n"
+                f"  - 環境変数 KINTONE_BASE_URL: {env_value}\n"
+                f"  - YAML設定の base_url: {self.base_url}"
             )
 
         # ★キャッシュ用（必須）
