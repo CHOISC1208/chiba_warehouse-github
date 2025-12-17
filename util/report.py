@@ -48,10 +48,6 @@ def build_allocation_summary(
             ]
         )
 
-    print(f"[DEBUG] allocation_df shape: {allocation_df.shape}")
-    print(f"[DEBUG] allocation_df columns: {allocation_df.columns.tolist()}")
-    print(f"[DEBUG] allocation_df sample:\n{allocation_df.head()}")
-
     # 1) 必要な情報を結合
     # 年月フォーマットを統一（日付形式に変換）
     df = allocation_df.copy()
@@ -60,22 +56,16 @@ def build_allocation_summary(
     psi_merge = psi_df[["識別子", "年月", "In_pl", "Sales_pl", "EndInv_pl"]].copy()
     psi_merge["年月"] = pd.to_datetime(psi_merge["年月"]).dt.normalize()
 
-    print(f"[DEBUG] allocation 年月 sample: {df['年月'].head().tolist()}")
-    print(f"[DEBUG] psi 年月 sample: {psi_merge['年月'].head().tolist()}")
-
     # allocation_df に PSI情報を結合
     df = df.merge(
         psi_merge,
         on=["識別子", "年月"],
         how="left"
     )
-    print(f"[DEBUG] After PSI merge, df shape: {df.shape}")
-    print(f"[DEBUG] After PSI merge, null counts:\n{df[['In_pl', 'Sales_pl', 'EndInv_pl']].isnull().sum()}")
 
     # warehouse_master から場所id, 置場名を取得
     wh_info = warehouse_master[["置場id", "場所id", "場所名", "置場名"]].drop_duplicates()
     df = df.merge(wh_info, on="置場id", how="left")
-    print(f"[DEBUG] After warehouse_master merge, df shape: {df.shape}")
 
     # id_warehouse_master から置場区分, 出荷場所を取得
     # 重要: 識別子×置場idの組み合わせで重複がないように確実に1行にする
@@ -83,13 +73,7 @@ def build_allocation_summary(
         ["識別子", "置場id", "置場区分", "出荷場所", "出荷場所名"]
     ].drop_duplicates(subset=["識別子", "置場id"], keep="first")
 
-    print(f"[DEBUG] id_wh_info shape after drop_duplicates: {id_wh_info.shape}")
-    print(f"[DEBUG] Checking duplicates in id_wh_info: {id_wh_info.duplicated(subset=['識別子', '置場id']).sum()}")
-
     df = df.merge(id_wh_info, on=["識別子", "置場id"], how="left")
-    print(f"[DEBUG] After id_warehouse_master merge, df shape: {df.shape}")
-    print(f"[DEBUG] Expected shape: {allocation_df.shape[0]} (should match)")
-    print(f"[DEBUG] 置場区分 unique values: {df['置場区分'].unique()}")
 
     # 2) コスト単価の取得（場所idごとに保管費、入出庫費を取得）
     # 保管費
@@ -98,7 +82,6 @@ def build_allocation_summary(
         (cost_master["単位"].isin(["PL", "円/PL"]))
     ][["場所id", "cost"]].drop_duplicates(subset=["場所id"], keep="first")
     storage_cost = storage_cost.rename(columns={"cost": "保管単価"})
-    print(f"[DEBUG] storage_cost shape: {storage_cost.shape}, duplicates: {storage_cost.duplicated(subset=['場所id']).sum()}")
 
     # 入出庫費
     io_cost = cost_master[
@@ -106,35 +89,23 @@ def build_allocation_summary(
         (cost_master["単位"].isin(["PL", "円/PL"]))
     ][["場所id", "cost"]].drop_duplicates(subset=["場所id"], keep="first")
     io_cost = io_cost.rename(columns={"cost": "入出庫単価"})
-    print(f"[DEBUG] io_cost shape: {io_cost.shape}, duplicates: {io_cost.duplicated(subset=['場所id']).sum()}")
 
     # 場所idごとの単価をマージ
     df = df.merge(storage_cost, on="場所id", how="left")
-    print(f"[DEBUG] After storage_cost merge, df shape: {df.shape}")
-
     df = df.merge(io_cost, on="場所id", how="left")
-    print(f"[DEBUG] After io_cost merge, df shape: {df.shape}")
 
     # 出荷場所の入出庫単価も取得（区分1の倉庫間移動用）
     # 出荷場所の場所idを取得
     ship_wh = warehouse_master[["置場id", "場所id"]].drop_duplicates(subset=["置場id"], keep="first")
     ship_wh = ship_wh.rename(columns={"置場id": "出荷場所", "場所id": "出荷場所_場所id"})
-    print(f"[DEBUG] ship_wh shape: {ship_wh.shape}, duplicates: {ship_wh.duplicated(subset=['出荷場所']).sum()}")
-
     df = df.merge(ship_wh, on="出荷場所", how="left")
-    print(f"[DEBUG] After ship_wh merge, df shape: {df.shape}")
 
     # 出荷場所の入出庫単価
     ship_io_cost = io_cost.rename(columns={"場所id": "出荷場所_場所id", "入出庫単価": "出荷場所_入出庫単価"})
-    print(f"[DEBUG] ship_io_cost shape: {ship_io_cost.shape}, duplicates: {ship_io_cost.duplicated(subset=['出荷場所_場所id']).sum()}")
-
     df = df.merge(ship_io_cost, on="出荷場所_場所id", how="left")
-    print(f"[DEBUG] After ship_io_cost merge, df shape: {df.shape}")
 
     # 3) トランザクション生成
     transactions = []
-
-    print(f"[DEBUG] Starting transaction generation for {len(df)} rows...")
 
     for idx, row in df.iterrows():
         識別子 = row["識別子"]
@@ -154,21 +125,14 @@ def build_allocation_summary(
         保管単価 = row.get("保管単価", 0)
         入出庫単価 = row.get("入出庫単価", 0)
 
-        if idx < 3:  # 最初の3行だけログ出力
-            print(f"[DEBUG] Row {idx}: 識別子={識別子}, 置場id={置場id}, 置場区分={置場区分}, x_pl={x_pl}, EndInv={EndInv_pl}, In={In_pl}, Sales={Sales_pl}")
-
         # PSI情報がNaNの場合はスキップ
         if pd.isna(EndInv_pl) or pd.isna(In_pl) or pd.isna(Sales_pl):
-            if idx < 3:
-                print(f"[DEBUG] Row {idx}: Skipping due to NaN PSI values")
             continue
 
         # 置場区分を整数に変換（文字列の場合もある）
         try:
             置場区分 = int(置場区分)
         except (ValueError, TypeError):
-            if idx < 3:
-                print(f"[DEBUG] Row {idx}: Invalid 置場区分 value: {置場区分}")
             continue
 
         # PSI値をx_plの比率で按分
@@ -181,9 +145,6 @@ def build_allocation_summary(
         else:
             倉庫入庫量 = 0
             倉庫出庫量 = 0
-
-        if idx < 3:
-            print(f"[DEBUG] Row {idx}: 按分後 - 保管={倉庫保管量}, 入庫={倉庫入庫量}, 出庫={倉庫出庫量}")
 
         # 区分2（保管&出荷可能）の場合
         if 置場区分 == 2:
@@ -305,13 +266,7 @@ def build_allocation_summary(
                 "コスト": 倉庫出庫量 * 出荷場所_入出庫単価,
             })
 
-    print(f"[DEBUG] Generated {len(transactions)} transactions")
     transaction_df = pd.DataFrame(transactions)
-    print(f"[DEBUG] transaction_df shape: {transaction_df.shape}")
-
-    if not transaction_df.empty:
-        print(f"[DEBUG] transaction_df sample:\n{transaction_df.head()}")
-
     return transaction_df
 
 
