@@ -1,0 +1,26 @@
+base_url: 'https://xxxx.cybozu.com/k/v1/records.json'
+configs:
+  plchange:
+    app_no: 1891
+    apitoken: 'p8fk8wI7x5cEikpTlIVdxvDNYItiwhtuz33wpjjv'
+    query: ''
+  id:
+    app_no: 1890
+    apitoken: 'Fkbi9ZJO2jjvgJSTnmBFCPeNVpI1V8kQHSrexUoK'
+    query: ''
+  item:
+    app_no: 1894
+    apitoken: 'pjdDygtuLavGpwfbftUiiE30w3ITjQj4lrdHovrG'
+    query: ''
+  place:
+    app_no: 1904
+    apitoken: '6CxL0SY1RDlfhJ1mNDZxR8bjivd3IJBJvlhuR0VB'
+    query: ''
+  warehouse:
+    app_no: 1905
+    apitoken: 'oFKIuJ6xq5Bnreb9SxXDjRvlhMo8NssevaTsXEEW'
+    query: ''
+  id_warehouse:
+    app_no: 1906
+    apitoken: 'kEDRA6OWb2L0zJF6TLHiiRUk2iJgibehGooyLr6I'
+    query: ''
