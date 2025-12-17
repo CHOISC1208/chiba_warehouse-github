@@ -42,6 +42,18 @@ class KintoneDataManager:
         self.base_url: str = settings["base_url"]
         self.configs: Dict[str, Dict[str, str]] = settings["configs"]
 
+        # 環境変数が展開されていない場合のチェック
+        if '${' in self.base_url or not self.base_url.startswith('http'):
+            raise ValueError(
+                f"環境変数 KINTONE_BASE_URL が設定されていません。\n"
+                f"以下の手順で設定してください：\n"
+                f"1. プロジェクトルートに .env ファイルを作成\n"
+                f"2. .env ファイルに以下を追加：\n"
+                f"   KINTONE_BASE_URL=https://your-subdomain.cybozu.com/k/v1/records.json\n"
+                f"3. python-dotenv がインストールされているか確認：pip install python-dotenv\n"
+                f"現在の base_url: {self.base_url}"
+            )
+
         # ★キャッシュ用（必須）
         self.dataframes: Dict[str, pd.DataFrame] = {}
         self._fetched_keys: set[str] = set()
