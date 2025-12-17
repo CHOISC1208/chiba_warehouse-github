@@ -40,12 +40,17 @@ def build_allocation_summary(
     """
 
     if allocation_df.empty:
+        print("[WARNING] allocation_df is empty!")
         return pd.DataFrame(
             columns=[
                 "識別子", "年月", "取引タイプ", "置場id", "置場名",
                 "移動先置場id", "移動先置場名", "数量(pl)", "単価", "コスト"
             ]
         )
+
+    print(f"[DEBUG] allocation_df shape: {allocation_df.shape}")
+    print(f"[DEBUG] allocation_df columns: {allocation_df.columns.tolist()}")
+    print(f"[DEBUG] allocation_df sample:\n{allocation_df.head()}")
 
     # 1) 必要な情報を結合
     # allocation_df に PSI情報を結合
@@ -54,16 +59,20 @@ def build_allocation_summary(
         on=["識別子", "年月"],
         how="left"
     )
+    print(f"[DEBUG] After PSI merge, df shape: {df.shape}")
 
     # warehouse_master から場所id, 置場名を取得
     wh_info = warehouse_master[["置場id", "場所id", "場所名", "置場名"]].drop_duplicates()
     df = df.merge(wh_info, on="置場id", how="left")
+    print(f"[DEBUG] After warehouse_master merge, df shape: {df.shape}")
 
     # id_warehouse_master から置場区分, 出荷場所を取得
     id_wh_info = id_warehouse_master[
         ["識別子", "置場id", "置場区分", "出荷場所", "出荷場所名"]
     ].drop_duplicates()
     df = df.merge(id_wh_info, on=["識別子", "置場id"], how="left")
+    print(f"[DEBUG] After id_warehouse_master merge, df shape: {df.shape}")
+    print(f"[DEBUG] 置場区分 unique values: {df['置場区分'].unique()}")
 
     # 2) コスト単価の取得（場所idごとに保管費、入出庫費を取得）
     # 保管費
@@ -97,7 +106,9 @@ def build_allocation_summary(
     # 3) トランザクション生成
     transactions = []
 
-    for _, row in df.iterrows():
+    print(f"[DEBUG] Starting transaction generation for {len(df)} rows...")
+
+    for idx, row in df.iterrows():
         識別子 = row["識別子"]
         年月 = row["年月"]
         置場id = row["置場id"]
@@ -110,6 +121,9 @@ def build_allocation_summary(
 
         保管単価 = row.get("保管単価", 0)
         入出庫単価 = row.get("入出庫単価", 0)
+
+        if idx < 3:  # 最初の3行だけログ出力
+            print(f"[DEBUG] Row {idx}: 識別子={識別子}, 置場id={置場id}, 置場区分={置場区分}, EndInv={EndInv_pl}, In={In_pl}, Sales={Sales_pl}")
 
         # 区分2（保管&出荷可能）の場合
         if 置場区分 == 2:
@@ -231,7 +245,12 @@ def build_allocation_summary(
                 "コスト": Sales_pl * 出荷場所_入出庫単価,
             })
 
+    print(f"[DEBUG] Generated {len(transactions)} transactions")
     transaction_df = pd.DataFrame(transactions)
+    print(f"[DEBUG] transaction_df shape: {transaction_df.shape}")
+
+    if not transaction_df.empty:
+        print(f"[DEBUG] transaction_df sample:\n{transaction_df.head()}")
 
     return transaction_df
 
