@@ -35,41 +35,11 @@ from main import run_optimization
 
 # MAGIC %md
 # MAGIC ## 2. 需要データの準備
-# MAGIC
-# MAGIC 需要データを読み込む方法は3つあります：
-# MAGIC - **方法A**: DBFSにアップロードしたCSVファイル
-# MAGIC - **方法B**: Unity Catalogのテーブル
-# MAGIC - **方法C**: 外部ストレージ（S3, Azure Blob等）
 
 # COMMAND ----------
 
-# 【方法A】DBFSにアップロードしたCSVファイルを使用
-# ウィジェットでパスを指定
-dbutils.widgets.text("csv_path", "/dbfs/FileStore/warehouse_optimizer/input/20251208.csv", "需要CSVパス")
-demand_csv_path = dbutils.widgets.get("csv_path")
-
-# または、直接指定
-# demand_csv_path = "/dbfs/FileStore/warehouse_optimizer/input/20251208.csv"
-
-# COMMAND ----------
-
-# 【方法B】Unity Catalogのテーブルから読み込んでCSVに変換
-# カタログからSparkデータフレームとして読み込み
-# demand_df = spark.table("catalog_name.schema_name.demand_table")
-#
-# # 一時的にCSVとして保存
-# temp_csv_path = "/dbfs/tmp/demand_data.csv"
-# demand_df.toPandas().to_csv(temp_csv_path, index=False)
-# demand_csv_path = temp_csv_path
-
-# COMMAND ----------
-
-# 【方法C】外部ストレージから読み込み
-# Azure Blob Storageの例
-# demand_csv_path = "wasbs://container@storageaccount.blob.core.windows.net/path/to/demand.csv"
-#
-# S3の例
-# demand_csv_path = "s3://bucket-name/path/to/demand.csv"
+# CSVパスを直接指定
+demand_csv_path = "/Volumes/zone2_mo/chiba_warehouse/demand/20251208.csv"
 
 # COMMAND ----------
 
@@ -99,27 +69,18 @@ display(allocation_summary_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5. 結果の保存（オプション）
-# MAGIC
-# MAGIC DeltaテーブルやParquetファイルとして保存できます。
+# MAGIC ## 5. Unity Catalogへの保存
 
 # COMMAND ----------
 
-# Deltaテーブルとして保存
-psi_df.write.format("delta").mode("append").saveAsTable("warehouse_optimization.psi")
-allocation_summary_df.write.format("delta").mode("append").saveAsTable("warehouse_optimization.allocation_summary")
+# PandasデータフレームをSparkデータフレームに変換
+psi_spark_df = spark.createDataFrame(psi_df)
+allocation_summary_spark_df = spark.createDataFrame(allocation_summary_df)
 
-# COMMAND ----------
+# Unity Catalogのテーブルに追記（append）
+psi_spark_df.write.mode("append").saveAsTable("zone2_mo.chiba_warehouse.psi")
+allocation_summary_spark_df.write.mode("append").saveAsTable("zone2_mo.chiba_warehouse.allocation_summary")
 
-# または、Parquetファイルとして保存
-output_path = "/dbfs/FileStore/warehouse_optimizer/output/"
-psi_df.to_parquet(f"{output_path}psi.parquet")
-allocation_summary_df.to_parquet(f"{output_path}allocation_summary.parquet")
-
-# COMMAND ----------
-
-# CSVとして保存（Excel用）
-psi_df.to_csv(f"{output_path}psi.csv", index=False, encoding="utf-8-sig")
-allocation_summary_df.to_csv(f"{output_path}allocation_summary.csv", index=False, encoding="utf-8-sig")
-
-print(f"結果を {output_path} に保存しました")
+print("[INFO] データをUnity Catalogに保存しました")
+print("  - zone2_mo.chiba_warehouse.psi")
+print("  - zone2_mo.chiba_warehouse.allocation_summary")
