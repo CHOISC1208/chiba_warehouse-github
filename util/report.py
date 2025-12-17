@@ -126,6 +126,10 @@ def build_allocation_summary(
         置場名 = row["置場名"]
         置場区分 = row["置場区分"]
 
+        # allocation_dfのx_plは、この倉庫に配置された在庫量
+        x_pl = row["x_pl"]
+
+        # PSI情報（識別子×年月の合計値）
         EndInv_pl = row["EndInv_pl"]
         In_pl = row["In_pl"]
         Sales_pl = row["Sales_pl"]
@@ -134,7 +138,7 @@ def build_allocation_summary(
         入出庫単価 = row.get("入出庫単価", 0)
 
         if idx < 3:  # 最初の3行だけログ出力
-            print(f"[DEBUG] Row {idx}: 識別子={識別子}, 置場id={置場id}, 置場区分={置場区分}, EndInv={EndInv_pl}, In={In_pl}, Sales={Sales_pl}")
+            print(f"[DEBUG] Row {idx}: 識別子={識別子}, 置場id={置場id}, 置場区分={置場区分}, x_pl={x_pl}, EndInv={EndInv_pl}, In={In_pl}, Sales={Sales_pl}")
 
         # PSI情報がNaNの場合はスキップ
         if pd.isna(EndInv_pl) or pd.isna(In_pl) or pd.isna(Sales_pl):
@@ -150,6 +154,20 @@ def build_allocation_summary(
                 print(f"[DEBUG] Row {idx}: Invalid 置場区分 value: {置場区分}")
             continue
 
+        # PSI値をx_plの比率で按分
+        # x_plは、この倉庫に配置された在庫量（保管量）
+        # In_pl、Sales_plは、EndInv_plに対する比率で計算
+        倉庫保管量 = x_pl
+        if EndInv_pl > 0:
+            倉庫入庫量 = In_pl * (x_pl / EndInv_pl)
+            倉庫出庫量 = Sales_pl * (x_pl / EndInv_pl)
+        else:
+            倉庫入庫量 = 0
+            倉庫出庫量 = 0
+
+        if idx < 3:
+            print(f"[DEBUG] Row {idx}: 按分後 - 保管={倉庫保管量}, 入庫={倉庫入庫量}, 出庫={倉庫出庫量}")
+
         # 区分2（保管&出荷可能）の場合
         if 置場区分 == 2:
             # 1. 保管
@@ -161,9 +179,9 @@ def build_allocation_summary(
                 "置場名": 置場名,
                 "移動先置場id": None,
                 "移動先置場名": None,
-                "数量(pl)": EndInv_pl,
+                "数量(pl)": 倉庫保管量,
                 "単価": 保管単価,
-                "コスト": EndInv_pl * 保管単価,
+                "コスト": 倉庫保管量 * 保管単価,
             })
 
             # 2. 入庫
@@ -175,9 +193,9 @@ def build_allocation_summary(
                 "置場名": 置場名,
                 "移動先置場id": None,
                 "移動先置場名": None,
-                "数量(pl)": In_pl,
+                "数量(pl)": 倉庫入庫量,
                 "単価": 入出庫単価,
-                "コスト": In_pl * 入出庫単価,
+                "コスト": 倉庫入庫量 * 入出庫単価,
             })
 
             # 3. 出庫
@@ -189,9 +207,9 @@ def build_allocation_summary(
                 "置場名": 置場名,
                 "移動先置場id": None,
                 "移動先置場名": None,
-                "数量(pl)": Sales_pl,
+                "数量(pl)": 倉庫出庫量,
                 "単価": 入出庫単価,
-                "コスト": Sales_pl * 入出庫単価,
+                "コスト": 倉庫出庫量 * 入出庫単価,
             })
 
         # 区分1（保管専用）の場合
@@ -209,9 +227,9 @@ def build_allocation_summary(
                 "置場名": 置場名,
                 "移動先置場id": None,
                 "移動先置場名": None,
-                "数量(pl)": EndInv_pl,
+                "数量(pl)": 倉庫保管量,
                 "単価": 保管単価,
-                "コスト": EndInv_pl * 保管単価,
+                "コスト": 倉庫保管量 * 保管単価,
             })
 
             # 2. 入庫
@@ -223,9 +241,9 @@ def build_allocation_summary(
                 "置場名": 置場名,
                 "移動先置場id": None,
                 "移動先置場名": None,
-                "数量(pl)": In_pl,
+                "数量(pl)": 倉庫入庫量,
                 "単価": 入出庫単価,
-                "コスト": In_pl * 入出庫単価,
+                "コスト": 倉庫入庫量 * 入出庫単価,
             })
 
             # 3. 倉庫間出庫（元倉庫から出荷場所への移動）
@@ -237,9 +255,9 @@ def build_allocation_summary(
                 "置場名": 置場名,
                 "移動先置場id": 出荷場所,
                 "移動先置場名": 出荷場所名,
-                "数量(pl)": Sales_pl,
+                "数量(pl)": 倉庫出庫量,
                 "単価": 入出庫単価,
-                "コスト": Sales_pl * 入出庫単価,
+                "コスト": 倉庫出庫量 * 入出庫単価,
             })
 
             # 4. 倉庫間入庫（出荷場所での受け入れ）
@@ -251,9 +269,9 @@ def build_allocation_summary(
                 "置場名": 出荷場所名,
                 "移動先置場id": 置場id,
                 "移動先置場名": 置場名,
-                "数量(pl)": Sales_pl,
+                "数量(pl)": 倉庫出庫量,
                 "単価": 出荷場所_入出庫単価,
-                "コスト": Sales_pl * 出荷場所_入出庫単価,
+                "コスト": 倉庫出庫量 * 出荷場所_入出庫単価,
             })
 
             # 5. 出庫（出荷場所から顧客への出荷）
@@ -265,9 +283,9 @@ def build_allocation_summary(
                 "置場名": 出荷場所名,
                 "移動先置場id": None,
                 "移動先置場名": None,
-                "数量(pl)": Sales_pl,
+                "数量(pl)": 倉庫出庫量,
                 "単価": 出荷場所_入出庫単価,
-                "コスト": Sales_pl * 出荷場所_入出庫単価,
+                "コスト": 倉庫出庫量 * 出荷場所_入出庫単価,
             })
 
     print(f"[DEBUG] Generated {len(transactions)} transactions")
